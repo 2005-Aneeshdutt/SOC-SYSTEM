@@ -174,26 +174,7 @@ Automatically maps detection types to MITRE techniques:
 - `remote_services` → T1021 (Remote Services)
 - `ingress_tool_transfer` → T1105 (Ingress Tool Transfer)
 
-## 🔍 Explainability
-
-### Feature Attribution
-- **Z-Scores**: Deviation from training data mean
-- **Percentiles**: Position in training distribution (5th, 25th, 50th, 75th, 95th, 99th)
-- **Top Features**: Ranked by attribution score
-
-Example:
-```
-auth_failures: 12 (99th percentile, z-score: 3.2)
-distinct_dst_ports: 8 (95th percentile, z-score: 2.1)
-```
-
-### Model Agreement
-Shows how well window-based and sequence-based models agree:
-- **High**: Difference < 0.2
-- **Medium**: Difference 0.2-0.4
-- **Low**: Difference > 0.4
-
-## 🚀 Quick Start
+##  Quick Start
 
 ### Prerequisites
 - Python 3.10+

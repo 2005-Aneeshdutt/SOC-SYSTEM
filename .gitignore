@@ -9,6 +9,8 @@ __pycache__/
 data/
 artifacts/
 *.log
+*.db
+*.db-journal
 
 *.ipynb_checkpoints
 .streamlit/

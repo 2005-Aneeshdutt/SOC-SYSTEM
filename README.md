@@ -392,14 +392,3 @@ mypy soclsim/
 
 MIT License
 
-## 🤝 Contributing
-
-Contributions welcome! Please open an issue or submit a PR.
-
-## 📧 Contact
-
-For questions or issues, please open a GitHub issue.
-
----
-
-**Built with**: Python, FastAPI, Streamlit, PyTorch, scikit-learn, SQLModel

@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+pydantic
+python-dateutil
+orjson
+numpy
+pandas
+scikit-learn
+joblib
+torch
+tqdm
+streamlit
+watchdog
+plotly
+requests
+sqlmodel
+

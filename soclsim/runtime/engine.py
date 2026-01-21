@@ -39,7 +39,6 @@ def _recent(events: List[Dict[str, Any]], minutes: int) -> List[Dict[str, Any]]:
 
 
 def _mitre_keys_for_window(w: Dict[str, Any], x: np.ndarray, feature_names: List[str]) -> List[str]:
-    # Simple, explainable, SOC-aligned rule hooks (works alongside ML scores).
     fn = {name: float(x[i]) for i, name in enumerate(feature_names)}
     keys: List[str] = []
 
@@ -49,7 +48,6 @@ def _mitre_keys_for_window(w: Dict[str, Any], x: np.ndarray, feature_names: List
         keys += ["bruteforce"]
 
     if fn.get("rare_command_count", 0.0) >= 1:
-        # downloader/account manipulation are distinguished via evidence inspection below
         keys += ["ingress_tool_transfer"]
 
     if fn.get("distinct_dst_ports", 0.0) >= 3 and fn.get("bytes_sum", 0.0) > 250_000:
@@ -59,7 +57,6 @@ def _mitre_keys_for_window(w: Dict[str, Any], x: np.ndarray, feature_names: List
 
 
 def _refine_mitre_from_evidence(keys: List[str], evidence: List[Dict[str, Any]]) -> List[str]:
-    # Inspect process commands for higher precision tags
     for e in evidence:
         if e.get("source") != "process":
             continue
@@ -81,11 +78,9 @@ class DetectionResult:
 
 
 def detect(events: List[Dict[str, Any]], artifacts: Artifacts) -> DetectionResult:
-    """Run full detection over a set of normalized events."""
     if not events:
         return DetectionResult(signals=[], alerts=[], incidents=[])
 
-    # Window scoring
     windows = windowize(events)
     Xw = np.stack([w.x for w in windows], axis=0) if windows else np.zeros((0, len(artifacts.feature_names)))
     iso_s = score_isoforest(artifacts.iso, Xw) if len(windows) else np.zeros((0,), dtype=np.float32)
@@ -97,22 +92,18 @@ def detect(events: List[Dict[str, Any]], artifacts: Artifacts) -> DetectionResul
     for i, w in enumerate(windows):
         iso_score = float(iso_s[i])
         dense_score = float(dense_s[i])
-        # Window score: blend ISO + dense AE
         window_score = float(1.0 - (1.0 - iso_score) * (1.0 - dense_score))
         if window_score < THRESHOLDS.signal_min_score:
             continue
 
-        # Build feature dict for classification
         feature_dict = {name: float(w.x[j]) for j, name in enumerate(w.feature_names)}
 
         mitre_keys = _mitre_keys_for_window({}, w.x, w.feature_names)
         mitre_keys = _refine_mitre_from_evidence(mitre_keys, w.evidence)
 
-        # Classify detection
         detection_type, category, class_mitre_keys = classify_detection(
-            feature_dict, w.evidence, window_score, 0.0  # sequence_score not available yet for window signals
+            feature_dict, w.evidence, window_score, 0.0
         )
-        # Merge MITRE keys
         all_mitre_keys = sorted(set(mitre_keys + class_mitre_keys))
 
         signals.append(
@@ -132,7 +123,6 @@ def detect(events: List[Dict[str, Any]], artifacts: Artifacts) -> DetectionResul
             )
         )
 
-    # Session scoring (sequence AE)
     sessions = sessionize(events)
     sess_dicts = [
         {
@@ -159,9 +149,8 @@ def detect(events: List[Dict[str, Any]], artifacts: Artifacts) -> DetectionResul
             if not mitre_keys:
                 mitre_keys = ["valid_accounts"]
 
-            # Classify sequence-based detection
             detection_type, category, class_mitre_keys = classify_detection(
-                None, s["events"], 0.0, sequence_score  # No window features for sequence signals
+                None, s["events"], 0.0, sequence_score
             )
             all_mitre_keys = sorted(set(mitre_keys + class_mitre_keys))
 
@@ -182,25 +171,19 @@ def detect(events: List[Dict[str, Any]], artifacts: Artifacts) -> DetectionResul
                 )
             )
 
-    # Run rule-based detection
     rule_alerts = run_all_rules(events)
     
-    # Convert rule alerts to signals for correlation
     for rule_alert in rule_alerts:
-        # Combine ML score (if any) with rule confidence
-        # Find matching ML signal if exists
         matching_ml_score = 0.0
         for sig in signals:
             if sig.ip == rule_alert.entities.get("ip") or sig.user == rule_alert.entities.get("user"):
                 matching_ml_score = max(matching_ml_score, sig.final_risk)
         
-        # Final score: weighted combination (70% rule, 30% ML if available)
         if matching_ml_score > 0:
             final_score = 0.7 * rule_alert.confidence + 0.3 * matching_ml_score
         else:
             final_score = rule_alert.confidence
         
-        # Convert rule alert to signal
         signals.append(
             Signal(
                 start_ts=rule_alert.start_ts,
@@ -215,7 +198,7 @@ def detect(events: List[Dict[str, Any]], artifacts: Artifacts) -> DetectionResul
                 detection_type=rule_alert.rule_name,
                 category="rule_based",
                 evidence=rule_alert.evidence,
-                mitre_keys=[rule_alert.rule_name],  # Will be mapped in correlation
+                mitre_keys=[rule_alert.rule_name],
             )
         )
     
@@ -224,7 +207,6 @@ def detect(events: List[Dict[str, Any]], artifacts: Artifacts) -> DetectionResul
 
 
 def detect_recent(events: List[Dict[str, Any]], artifacts: Artifacts, minutes: int = 360) -> DetectionResult:
-    """Run detection on the most recent slice of events (default 6h)."""
     return detect(_recent(events, minutes=minutes), artifacts)
 
 

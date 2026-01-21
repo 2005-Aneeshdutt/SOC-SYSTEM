@@ -39,7 +39,6 @@ base_url = st.sidebar.text_input("API base URL", value=os.environ.get("SOCLSIM_A
 min_sev = st.sidebar.selectbox("Min severity", ["low", "medium", "high"], index=1)
 limit = st.sidebar.slider("Max alerts", 50, 500, 200, step=50)
 
-# Auto-refresh toggle
 auto_refresh = st.sidebar.checkbox("Auto-refresh (30s)", value=False)
 if auto_refresh:
     time.sleep(30)
@@ -61,13 +60,11 @@ with colA:
         df = pd.DataFrame(alerts)
         df["start_ts"] = pd.to_datetime(df["start_ts"])
         df = df.sort_values("start_ts")
-        # Use final_risk if available, otherwise score
         y_col = "final_risk" if "final_risk" in df.columns else "score"
         hover_cols = ["user", "ip", "title"]
         if "detection_type" in df.columns:
             hover_cols.append("detection_type")
         
-        # Tabbed view: Scatter plot and Bar chart
         tab1, tab2 = st.tabs(["Scatter Plot", "Alerts per Minute"])
         
         with tab1:
@@ -85,13 +82,11 @@ with colA:
             st.plotly_chart(fig, use_container_width=True)
         
         with tab2:
-            # Group by minute and count alerts
             df["minute"] = df["start_ts"].dt.floor("min")
             minute_counts = df.groupby("minute", as_index=False).size()
             minute_counts.columns = ["minute", "count"]
             minute_counts = minute_counts.sort_values("minute")
             
-            # Calculate rolling average (5-minute window)
             minute_counts["rolling_avg"] = minute_counts["count"].rolling(window=5, min_periods=1).mean()
             
             fig2 = px.bar(
@@ -101,7 +96,6 @@ with colA:
                 labels={"minute": "Time", "count": "Alerts per Minute"},
                 title="Alert Frequency Over Time"
             )
-            # Add rolling average line
             fig2.add_scatter(
                 x=minute_counts["minute"],
                 y=minute_counts["rolling_avg"],
@@ -145,12 +139,10 @@ with colB:
     else:
         st.write("No IP risk scores yet.")
 
-# Evaluation Metrics
 st.subheader("Model Evaluation")
 try:
     import sys
     from pathlib import Path
-    # Add project root to path if not already there
     project_root = Path(__file__).parent.parent.parent
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
@@ -158,7 +150,6 @@ try:
     from soclsim.evaluation.metrics import compute_detection_metrics, compute_auc_score, generate_synthetic_labels
     
     if alerts:
-        # Generate synthetic labels for evaluation
         labels = generate_synthetic_labels(alerts)
         metrics = compute_detection_metrics(alerts, labels)
         auc = compute_auc_score(alerts, labels)
@@ -181,7 +172,6 @@ except ImportError:
 except Exception as e:
     st.info("Evaluation metrics not shown due to lack of labeled attack data. System focuses on unsupervised detection.")
 
-# Analytics section
 st.subheader("Analytics")
 col1, col2, col3 = st.columns(3)
 
@@ -209,22 +199,18 @@ with col3:
     if alerts:
         df_hour = pd.DataFrame(alerts)
         df_hour["created_ts"] = pd.to_datetime(df_hour["created_ts"])
-        # Group by hour properly
         df_hour["hour"] = df_hour["created_ts"].dt.floor("H")
         hourly = df_hour.groupby("hour", as_index=False).size()
         hourly.columns = ["hour", "count"]
         
         if len(hourly) > 0:
-            # Create full hour range for complete timeline
             min_hour = hourly["hour"].min()
             max_hour = hourly["hour"].max()
-            # Generate all hours in range
             hour_range = pd.date_range(start=min_hour.floor("H"), end=max_hour.ceil("H"), freq="H")
             hourly_full = pd.DataFrame({"hour": hour_range})
             hourly_full = hourly_full.merge(hourly, on="hour", how="left").fillna(0)
             hourly_full["count"] = hourly_full["count"].astype(int)
             
-            # Plot as histogram/bar chart for better visibility
             fig_hour = px.bar(hourly_full, x="hour", y="count", labels={"hour": "Time", "count": "Alerts"})
             fig_hour.update_layout(showlegend=False)
             st.plotly_chart(fig_hour, use_container_width=True)
@@ -233,8 +219,6 @@ with col3:
     else:
         st.write("No data")
 
-# Alert investigation view
-# Incident List View
 st.subheader("Incidents")
 try:
     incidents_resp = requests.get(f"{base_url}/incidents", params={"limit": 50}, timeout=10)
@@ -250,7 +234,6 @@ try:
             height=300,
         )
         
-        # Incident detail view
         if len(incidents_list) > 0:
             selected_inc = st.selectbox(
                 "Select incident to view details",
@@ -262,7 +245,6 @@ try:
                 try:
                     inc_detail = fetch_incident(base_url, inc["incident_id"])
                     
-                    # Incident status workflow
                     col1, col2 = st.columns(2)
                     with col1:
                         new_status = st.selectbox(
@@ -286,7 +268,6 @@ try:
                     with col2:
                         st.markdown(f"**Max Severity**: {inc_detail['max_severity']}")
                     
-                    # Resolution reason (if resolved or false_positive)
                     if new_status in ("resolved", "false_positive"):
                         resolution_type = st.selectbox(
                             "Resolution Type",
@@ -321,7 +302,6 @@ try:
                     st.markdown(f"**Total Alerts**: {inc_detail['total_alerts']}")
                     st.markdown(f"**Summary**: {inc_detail['summary']}")
                     
-                    # Analyst notes
                     notes = st.text_area(
                         "Analyst Notes",
                         value=inc_detail.get("analyst_notes", ""),
@@ -360,19 +340,16 @@ if alerts:
     pick = st.selectbox("Select alert", options=list(range(len(alerts))), format_func=lambda i: alerts[i]["title"])
     a = alerts[pick]
 
-    # Collapsible sections for investigation
     with st.expander("🔍 Risk Score Breakdown", expanded=True):
         final_risk = a.get("final_risk") or a.get("score", 0.0)
         window_score = a.get("window_score", 0.0)
         sequence_score = a.get("sequence_score", 0.0)
         
-        # Color code based on risk level
         risk_color = "🔴" if final_risk > 0.8 else "🟠" if final_risk > 0.5 else "🟡"
         st.markdown(f"**Final Risk**: {risk_color} `{final_risk:.3f}`")
         st.markdown(f"**Window Anomaly Score**: `{window_score:.3f}` (Isolation Forest + Dense Autoencoder)")
         st.markdown(f"**Sequence Anomaly Score**: `{sequence_score:.3f}` (LSTM Autoencoder)")
         
-        # Model agreement (how close are the two scores)
         score_diff = abs(window_score - sequence_score)
         agreement = "High" if score_diff < 0.2 else "Medium" if score_diff < 0.4 else "Low"
         agreement_color = "🟢" if agreement == "High" else "🟡" if agreement == "Medium" else "🔴"
@@ -392,7 +369,6 @@ if alerts:
         mitre_list = a.get("mitre", [])
     if mitre_list:
         mitre_df = pd.DataFrame(mitre_list)
-        # Color code tactics
         tactic_colors = {
             "Credential Access": "🔑",
             "Lateral Movement": "➡️",
@@ -408,7 +384,6 @@ if alerts:
     else:
         st.write("No MITRE mapping available")
 
-    # Explanation
     st.markdown("### Explanation")
     st.code(a.get("explanation", ""), language="text")
 
@@ -416,7 +391,6 @@ if alerts:
         top_feat = a.get("top_features", [])
     if top_feat:
         feat_df = pd.DataFrame(top_feat)
-        # Format display: show percentile if available
         display_cols = ["feature", "value"]
         if "percentile" in feat_df.columns:
             display_cols.append("percentile")
@@ -425,7 +399,6 @@ if alerts:
         if "attribution" in feat_df.columns:
             display_cols.append("attribution")
         
-        # Add formatted percentile column
         if "percentile" in feat_df.columns:
             feat_df["percentile_display"] = feat_df["percentile"].apply(
                 lambda p: f"{p:.1f}th percentile" if p != 50.0 else "median"
@@ -434,13 +407,11 @@ if alerts:
         
         st.dataframe(feat_df[display_cols], use_container_width=True)
         
-        # Show explanation
         if "percentile" in feat_df.columns:
             st.caption("Percentiles are computed from training data distribution. Higher percentiles indicate more anomalous values.")
     else:
         st.write("No feature attribution available")
 
-    # Previous alerts for same IP/user
     st.markdown("### Related Alerts")
     related_alerts = []
     if a.get("ip"):
@@ -467,11 +438,9 @@ if alerts:
     else:
         st.write("No related alerts found")
 
-    # Incident timeline (if incident_id exists)
     if a.get("incident_id_str") or a.get("incident_id"):
         st.markdown("### Incident Timeline")
         try:
-            # Use string ID if available, otherwise try integer lookup
             inc_id = a.get("incident_id_str") or str(a.get("incident_id", ""))
             if inc_id:
                 incident = fetch_incident(base_url, inc_id)
@@ -494,7 +463,6 @@ if alerts:
     with st.expander("📋 Evidence Timeline", expanded=False):
         evidence = a.get("evidence", [])
         if evidence:
-            # Show first 10 by default, allow expansion
             show_all = st.checkbox("Show all evidence", value=False, key=f"evidence_{a['alert_id']}")
             num_to_show = len(evidence) if show_all else min(10, len(evidence))
             
@@ -506,7 +474,6 @@ if alerts:
                 display_cols = [c for c in display_cols if c in ev_df.columns]
                 st.dataframe(ev_df[display_cols], use_container_width=True, height=min(400, num_to_show * 40))
             else:
-                # Fallback: show as JSON if no ts column
                 st.json(evidence[:num_to_show])
             
             if len(evidence) > num_to_show:

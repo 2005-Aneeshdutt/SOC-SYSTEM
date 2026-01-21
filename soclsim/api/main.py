@@ -73,7 +73,6 @@ def ingest(req: IngestRequest, db: Session = Depends(get_session)) -> Dict[str, 
             )
 
         STATE.events.extend(normalized)
-        # Keep memory bounded in demo mode
         STATE.events = STATE.events[-250_000:]
 
         try:
@@ -86,7 +85,6 @@ def ingest(req: IngestRequest, db: Session = Depends(get_session)) -> Dict[str, 
         except Exception as e:
             import traceback
             error_detail = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
-            # Log to console for debugging
             print(f"ERROR in detect/upsert: {error_detail}")
             raise HTTPException(status_code=500, detail=f"Detection/ingestion error: {error_detail}") from e
 
@@ -105,11 +103,6 @@ def ingest_log_file(
     file_path: str,
     db: Session = Depends(get_session)
 ) -> Dict[str, Any]:
-    """Ingest logs from a real log file (Zeek, Windows, SSH).
-    
-    Args:
-        file_path: Path to log file
-    """
     try:
         arts = _load_or_raise()
         file_path_obj = Path(file_path)
@@ -117,7 +110,6 @@ def ingest_log_file(
         if not file_path_obj.exists():
             raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
         
-        # Parse real log file
         from soclsim.logs.real_parsers import parse_real_log
         events = list(parse_real_log(file_path_obj))
         
@@ -177,7 +169,6 @@ def get_alerts(
         rows = db.exec(stmt).all()
 
     out: List[Dict[str, Any]] = []
-    # Pre-fetch all incident IDs to avoid N+1 queries
     incident_id_map: Dict[int, str] = {}
     if rows:
         inc_ids = {r.incident_id for r in rows if r.incident_id}
@@ -200,7 +191,7 @@ def get_alerts(
             "user": r.user,
             "ip": r.ip,
             "severity": r.severity,
-            "score": r.final_risk,  # backward compat
+            "score": r.final_risk,
             "window_score": r.window_score,
             "sequence_score": r.sequence_score,
             "final_risk": r.final_risk,
@@ -213,9 +204,8 @@ def get_alerts(
             "explanation": r.explanation,
             "top_features": json.loads(r.top_features_json),
             "evidence": json.loads(r.evidence_json),
-            "incident_id": r.incident_id,  # DB integer ID
+            "incident_id": r.incident_id,
         }
-        # Add string incident_id if available
         if r.incident_id and r.incident_id in incident_id_map:
             alert_dict["incident_id_str"] = incident_id_map[r.incident_id]
         out.append(alert_dict)
@@ -229,7 +219,6 @@ def get_incidents(
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_session),
 ) -> List[Dict[str, Any]]:
-    """Get list of incidents."""
     stmt = select(IncidentRow).order_by(IncidentRow.end_ts.desc()).limit(limit)
     rows = db.exec(stmt).all()
     return [
@@ -260,7 +249,6 @@ def update_incident(
     resolution_reason: Optional[str] = None,
     db: Session = Depends(get_session)
 ) -> Dict[str, Any]:
-    """Update incident status, analyst notes, and/or resolution reason."""
     inc_row = db.exec(select(IncidentRow).where(IncidentRow.incident_id == incident_id)).first()
     if not inc_row:
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
@@ -290,16 +278,8 @@ def update_incident(
 
 @app.get("/incidents/{incident_id}")
 def get_incident(incident_id: str, db: Session = Depends(get_session)) -> Dict[str, Any]:
-    """Get incident details with associated alerts.
-    
-    Accepts either:
-    - incident_id string (e.g., "inc_abc123")
-    - database integer ID (if passed as string)
-    """
-    # Try to find by incident_id string first
     inc_row = db.exec(select(IncidentRow).where(IncidentRow.incident_id == incident_id)).first()
     
-    # If not found, try as integer ID (for backward compat)
     if not inc_row:
         try:
             db_id = int(incident_id)
@@ -310,10 +290,7 @@ def get_incident(incident_id: str, db: Session = Depends(get_session)) -> Dict[s
     if not inc_row:
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
 
-    # Get incident DB ID
     inc_db_id = inc_row.id
-
-    # Get all alerts for this incident
     alert_rows = db.exec(select(AlertRow).where(AlertRow.incident_id == inc_db_id)).all()
     alerts = [
         {
@@ -352,11 +329,9 @@ def get_incident(incident_id: str, db: Session = Depends(get_session)) -> Dict[s
 
 @app.get("/stats")
 def stats() -> Dict[str, Any]:
-    """Get system stats with weighted entity risk scores."""
     with get_session() as db:
         alert_rows = db.exec(select(AlertRow)).all()
     
-    # Top users by weighted risk (incidents + severity + recency)
     user_scores: Dict[str, Dict[str, Any]] = {}
     for r in alert_rows:
         if r.user:
@@ -366,20 +341,18 @@ def stats() -> Dict[str, Any]:
             user_scores[r.user]["total_alerts"] += 1
             if r.incident_id:
                 user_scores[r.user]["incident_count"] += 1
-            # Severity weight: high=3, medium=2, low=1
             sev_weight = {"high": 3.0, "medium": 2.0, "low": 1.0}.get(r.severity, 1.0)
             user_scores[r.user]["severity_weight"] += sev_weight
             if not user_scores[r.user]["latest_ts"] or r.created_ts > user_scores[r.user]["latest_ts"]:
                 user_scores[r.user]["latest_ts"] = r.created_ts
     
-    # Calculate weighted risk: max_score * 0.4 + incident_count * 0.3 + severity_weight * 0.2 + recency * 0.1
     now = datetime.utcnow()
     user_risk_list = []
     for user, data in user_scores.items():
         recency_factor = 1.0
         if data["latest_ts"]:
             hours_ago = (now - data["latest_ts"]).total_seconds() / 3600
-            recency_factor = max(0.5, 1.0 - (hours_ago / 168.0))  # Decay over 1 week
+            recency_factor = max(0.5, 1.0 - (hours_ago / 168.0))
         
         weighted_risk = (
             data["max_score"] * 0.4 +
@@ -389,7 +362,6 @@ def stats() -> Dict[str, Any]:
         )
         user_risk_list.append({"user": user, "risk": round(weighted_risk, 3), "alerts": data["total_alerts"], "incidents": data["incident_count"]})
     
-    # Top IPs by weighted risk (same logic)
     ip_scores: Dict[str, Dict[str, Any]] = {}
     for r in alert_rows:
         if r.ip:

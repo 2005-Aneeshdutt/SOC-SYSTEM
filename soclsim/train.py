@@ -19,7 +19,7 @@ from soclsim.models.torch_models import TorchArtifacts, save_torch_artifacts
 from soclsim.models.train_torch import TorchTrainConfig, build_torch_artifacts, train_dense_autoencoder, train_seq_autoencoder
 
 
-def _load_and_normalize(raw_dir: Path) -> List[Dict[str, Any]]:
+def load_events(raw_dir: Path) -> List[Dict[str, Any]]:
     events: List[Dict[str, Any]] = []
     for source, fname in [("auth", "auth.ndjson"), ("network", "network.ndjson"), ("process", "process.ndjson")]:
         p = raw_dir / fname
@@ -43,7 +43,7 @@ def _load_and_normalize(raw_dir: Path) -> List[Dict[str, Any]]:
     return events
 
 
-def _sessions_to_dicts(sessions: List[Session]) -> List[Dict[str, Any]]:
+def sessions_to_dicts(sessions: List[Session]) -> List[Dict[str, Any]]:
     return [
         {
             "session_id": s.session_id,
@@ -68,23 +68,20 @@ def main(argv: List[str] | None = None) -> int:
     art_dir = Path(args.artifacts)
     art_dir.mkdir(parents=True, exist_ok=True)
 
-    events = _load_and_normalize(raw_dir)
+    events = load_events(raw_dir)
     if not events:
         raise SystemExit(f"No events found in {raw_dir}")
 
     sessions = sessionize(events)
-    sess_dicts = _sessions_to_dicts(sessions)
+    sess_dicts = sessions_to_dicts(sessions)
 
-    # Window features for classical + dense AE
     windows = windowize(events)
     Xw = np.stack([w.x for w in windows], axis=0)
     feature_names = windows[0].feature_names
 
-    # Train Isolation Forest
     iso = train_isoforest(Xw, feature_names)
     save_isoforest(str(art_dir / "isoforest.joblib"), iso)
 
-    # Train Torch models (dense AE + seq AE)
     cfg = TorchTrainConfig(epochs=int(args.epochs))
     dense_model, _ = train_dense_autoencoder(Xw, cfg)
 
@@ -93,15 +90,12 @@ def main(argv: List[str] | None = None) -> int:
     if seq_batch.x.shape[0] > 0:
         seq_model = train_seq_autoencoder(seq_batch.x, seq_batch.mask, cfg)
     else:
-        # degenerate fallback if dataset too small
         from soclsim.models.torch_models import LSTMSeqAutoencoder
-
         seq_model = LSTMSeqAutoencoder(vocab_size=len(token_map))
 
     torch_art = build_torch_artifacts(seq_model, dense_model, vocab_size=len(token_map), window_dim=int(Xw.shape[1]))
     save_torch_artifacts(str(art_dir / "torch.pt"), torch_art)
 
-    # Compute feature statistics for attribution
     feature_stats = {}
     for i, name in enumerate(feature_names):
         values = Xw[:, i]
@@ -116,7 +110,6 @@ def main(argv: List[str] | None = None) -> int:
             "p99": float(np.percentile(values, 99)),
         }
     
-    # Save metadata needed at inference time
     meta = {
         "feature_names": feature_names,
         "token_map": token_map,
